@@ -6,9 +6,11 @@
 
 # Python
 __pycache__/
+backend/__pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.pyc
 *.so
 .pytest_cache/
 .mypy_cache/

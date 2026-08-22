@@ -1,194 +1,100 @@
-import React, { useState, useEffect } from 'react';
-import { OrgProfile, TriageItem } from './types';
-import { Header } from './components/Header';
-import { ProfileSelector } from './components/ProfileSelector';
-import { Top5Feed } from './components/Top5Feed';
-import { ExplanationModal } from './components/ExplanationModal';
-import { CompareMode } from './components/CompareMode';
-import { NegativeTestView } from './components/NegativeTestView';
-import { GoldSetEvalView } from './components/GoldSetEvalView';
-import { ProfileUploader } from './components/ProfileUploader';
-import { VulnerabilityTable } from './components/VulnerabilityTable';
-import { RefreshCw, AlertCircle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { AlertCircle, RefreshCw } from 'lucide-react';
 import { LandingAuth } from './components/LandingAuth';
-
+import { WorkspaceShell } from './components/WorkspaceShell';
+import { AppOverview, ComparePage, GoldSetPage, InventoryPage, NegativeTestPage, ProfileCustomPage, ProfilesPage, TriageDetailPage, TriagePage, WorkspaceContext } from './components/WorkspacePages';
 import { API_BASE_URL } from './config';
+import { OrgProfile, TriageItem } from './types';
 
-export const App: React.FC = () => {
-  const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem('nexora_auth_token'));
+const AUTH_STORAGE_KEY = 'nexora_auth_token';
+export interface SessionUser { name: string; email: string; }
+
+function sessionUserFromToken(token: string | null): SessionUser {
+  try {
+    const payload = token?.split('.')[1];
+    if (!payload) throw new Error('No token payload');
+    const data = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+    return { name: data.name || data.email || 'Nexora user', email: data.email || '' };
+  } catch { return { name: 'Nexora user', email: '' }; }
+}
+
+function LoadingState({ message = 'Loading workspace…' }: { message?: string }) {
+  return <div className="workspace-state"><RefreshCw size={28} className="spin" /><p>{message}</p></div>;
+}
+
+function ProtectedWorkspace({ onSignOut, user }: { onSignOut: () => void; user: SessionUser }) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [profiles, setProfiles] = useState<OrgProfile[]>([]);
-  const [activeProfile, setActiveProfile] = useState<OrgProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<string>('triage');
+  const [customProfileIds, setCustomProfileIds] = useState<string[]>([]);
   const [top5, setTop5] = useState<TriageItem[]>([]);
   const [inventory, setInventory] = useState<TriageItem[]>([]);
-  const [selectedExplanationItem, setSelectedExplanationItem] = useState<TriageItem | null>(null);
-  const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const requestedProfileId = searchParams.get('profile');
+  const activeProfile = useMemo(() => profiles.find((profile) => profile.org_id === requestedProfileId) || profiles.find((profile) => profile.org_id === 'ORG-002') || profiles[0] || null, [profiles, requestedProfileId]);
 
-  // Initial fetch profiles
+  const selectProfile = (profile: OrgProfile) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('profile', profile.org_id);
+    setSearchParams(next, { replace: true });
+  };
+  const refreshProfiles = async () => {
+    setLoading(true); setError(null);
+    try {
+      const [profilesResponse, customIdsResponse] = await Promise.all([fetch(`${API_BASE_URL}/api/profiles`), fetch(`${API_BASE_URL}/api/custom-profile-ids`)]);
+      if (!profilesResponse.ok) throw new Error('Failed to load organisation profiles.');
+      setProfiles(await profilesResponse.json());
+      setCustomProfileIds(customIdsResponse.ok ? await customIdsResponse.json() : []);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Cannot connect to the backend server.'); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { void refreshProfiles(); }, []);
   useEffect(() => {
-    if (authToken) {
-      fetchProfiles();
-    }
-  }, [authToken]);
-
-  // Recalculate triage whenever activeProfile changes
-  useEffect(() => {
-    if (activeProfile) {
-      runTriage(activeProfile);
-    }
+    if (!activeProfile) return;
+    const controller = new AbortController();
+    const loadTriage = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/triage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal, body: JSON.stringify({ profile: activeProfile }) });
+        if (!response.ok) throw new Error('Unable to calculate triage for this profile.');
+        const result = await response.json(); setTop5(result.top_5 || []); setInventory(result.inventory || []);
+      } catch (reason) { if ((reason as Error).name !== 'AbortError') setError(reason instanceof Error ? reason.message : 'Unable to load triage data.'); }
+    };
+    void loadTriage(); return () => controller.abort();
   }, [activeProfile]);
-
-  const fetchProfiles = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/profiles`);
-      if (!res.ok) throw new Error('Failed to load profiles from backend.');
-      const data: OrgProfile[] = await res.json();
-      setProfiles(data);
-      if (data.length > 0) {
-        // Default to Startup (ORG-002) if available, or first org
-        const startup = data.find((p) => p.org_id === 'ORG-002') || data[0];
-        setActiveProfile(startup);
-      }
-    } catch (err: any) {
-      setError(err.message || 'Cannot connect to backend server. Make sure FastAPI server is running on port 8000.');
-    } finally {
-      setLoading(false);
-    }
+  const onProfileUploaded = (profile: OrgProfile) => { setProfiles((current) => [...current.filter((item) => item.org_id !== profile.org_id), profile]); setCustomProfileIds((current) => [...new Set([...current, profile.org_id])]); selectProfile(profile); };
+  const deleteCustomProfile = async (profile: OrgProfile) => {
+    const response = await fetch(`${API_BASE_URL}/api/profiles/${encodeURIComponent(profile.org_id)}`, { method: 'DELETE' });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || 'Unable to delete this custom profile.');
+    const remaining = profiles.filter((item) => item.org_id !== profile.org_id);
+    setProfiles(remaining); setCustomProfileIds((current) => current.filter((id) => id !== profile.org_id));
+    if (activeProfile?.org_id === profile.org_id && remaining[0]) selectProfile(remaining.find((item) => item.org_id === 'ORG-002') || remaining[0]);
   };
 
-  const runTriage = async (profile: OrgProfile) => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/triage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile: profile })
-      });
-      if (!res.ok) throw new Error('Triage recalculation failed');
-      const data = await res.json();
-      setTop5(data.top_5 || []);
-      setInventory(data.inventory || []);
-    } catch (err: any) {
-      console.error('Triage error:', err);
-    }
-  };
+  if (loading) return <LoadingState message="Loading organisation profiles…" />;
+  if (error && profiles.length === 0) return <div className="workspace-state"><AlertCircle size={32} /><h2>Workspace unavailable</h2><p>{error}</p><button className="btn-primary" onClick={() => void refreshProfiles()}><RefreshCw size={16} /> Retry</button></div>;
+  if (!activeProfile) return <div className="workspace-state"><AlertCircle size={32} /><h2>No organisation profiles found</h2></div>;
+  const context: WorkspaceContext = { profiles, activeProfile, selectProfile, top5, inventory, onProfileUploaded, customProfileIds, deleteCustomProfile };
+  return <WorkspaceShell activeProfile={activeProfile} user={user} onSignOut={onSignOut}>{error && <div className="workspace-inline-error"><AlertCircle size={17} /> {error}</div>}<Outlet context={context} /></WorkspaceShell>;
+}
 
-  const handleProfileUploaded = (newProfile: OrgProfile) => {
-    setProfiles((prev) => [...prev.filter((p) => p.org_id !== newProfile.org_id), newProfile]);
-    setActiveProfile(newProfile);
-    setActiveTab('triage');
-  };
+function AuthenticatedRoutes() {
+  const [token, setToken] = useState(() => localStorage.getItem(AUTH_STORAGE_KEY));
+  const navigate = useNavigate(); const location = useLocation();
+  const signIn = (nextToken: string) => { localStorage.setItem(AUTH_STORAGE_KEY, nextToken); setToken(nextToken); navigate('/app', { replace: true }); };
+  const signOut = () => { localStorage.removeItem(AUTH_STORAGE_KEY); setToken(null); navigate('/', { replace: true }); };
+  if (!token && location.pathname.startsWith('/app')) return <Navigate to="/" replace state={{ from: location.pathname + location.search }} />;
+  return <Routes>
+    <Route path="/" element={token ? <Navigate to="/app" replace /> : <LandingAuth onEnterApp={signIn} />} />
+    <Route path="/app" element={token ? <ProtectedWorkspace onSignOut={signOut} user={sessionUserFromToken(token)} /> : <Navigate to="/" replace />}>
+      <Route index element={<AppOverview />} /><Route path="triage" element={<TriagePage />} /><Route path="triage/:cveId" element={<TriageDetailPage />} />
+      <Route path="compare" element={<ComparePage />} /><Route path="negative-test" element={<NegativeTestPage />} /><Route path="gold-set" element={<GoldSetPage />} />
+      <Route path="inventory" element={<InventoryPage />} /><Route path="inventory/:cveId" element={<TriageDetailPage />} />
+      <Route path="profiles" element={<ProfilesPage />} /><Route path="profiles/custom" element={<ProfileCustomPage />} />
+    </Route>
+    <Route path="*" element={<Navigate to={token ? '/app' : '/'} replace />} />
+  </Routes>;
+}
 
-  const handleSignOut = () => {
-    localStorage.removeItem('nexora_auth_token');
-    setAuthToken(null);
-    setProfiles([]);
-    setActiveProfile(null);
-    setTop5([]);
-    setInventory([]);
-    setError(null);
-    setLoading(false);
-  };
-
-  if (!authToken) {
-    return <LandingAuth onEnterApp={(token) => { localStorage.setItem('nexora_auth_token', token); setAuthToken(token); }} />;
-  }
-
-  return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      
-      {/* Header Navigation */}
-      <Header
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        activeProfile={activeProfile}
-        onOpenUpload={() => setShowUploadModal(true)}
-        onSignOut={handleSignOut}
-      />
-
-      {/* Main Container */}
-      <main style={{ width: '100%', maxWidth: '1320px', margin: '0 auto', padding: '0 24px 60px 24px', flex: '1' }}>
-        
-        {error ? (
-          <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', color: '#f87171', border: '1px solid var(--urgent-red)' }}>
-            <AlertCircle size={36} style={{ marginBottom: '12px' }} />
-            <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Connection Error</h2>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginTop: '6px', marginBottom: '20px' }}>
-              {error}
-            </p>
-            <button onClick={fetchProfiles} className="btn-primary">
-              <RefreshCw size={16} /> Retry Connection
-            </button>
-          </div>
-        ) : loading ? (
-          <div className="glass-panel" style={{ padding: '60px', textAlign: 'center', color: 'var(--text-muted)' }}>
-            <RefreshCw size={32} style={{ animation: 'spin 1s linear infinite', marginBottom: '16px' }} />
-            <h3 style={{ fontSize: '1.1rem', color: '#ffffff' }}>Loading Triage Engine...</h3>
-          </div>
-        ) : (
-          <>
-            {/* Profile Selector (shown across tabs) */}
-            <ProfileSelector
-              profiles={profiles}
-              activeProfile={activeProfile}
-              onSelectProfile={(p) => setActiveProfile(p)}
-            />
-
-            {/* Tab Views */}
-            {activeTab === 'triage' && (
-              <Top5Feed
-                top5={top5}
-                profile={activeProfile}
-                onSelectItem={(item) => setSelectedExplanationItem(item)}
-              />
-            )}
-
-            {activeTab === 'compare' && (
-              <CompareMode profiles={profiles} />
-            )}
-
-            {activeTab === 'negative' && (
-              <NegativeTestView profile={activeProfile} />
-            )}
-
-            {activeTab === 'goldset' && (
-              <GoldSetEvalView profile={activeProfile} />
-            )}
-
-            {activeTab === 'inventory' && (
-              <VulnerabilityTable inventory={inventory} />
-            )}
-          </>
-        )}
-
-      </main>
-
-      {/* Footer */}
-      <footer style={{ borderTop: '1px solid var(--border-color)', padding: '20px', textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-        NEXORA Personalised Vulnerability Triage Platform v2.0 • 24-Hour Hackathon MVP • Deterministic Decision Engine
-      </footer>
-
-      {/* Modals */}
-      {selectedExplanationItem && (
-        <ExplanationModal
-          item={selectedExplanationItem}
-          profile={activeProfile}
-          onClose={() => setSelectedExplanationItem(null)}
-        />
-      )}
-
-      {showUploadModal && (
-        <ProfileUploader
-          onProfileUploaded={handleProfileUploaded}
-          onClose={() => setShowUploadModal(false)}
-        />
-      )}
-
-    </div>
-  );
-};
-
-export default App;
+export default function App() { return <BrowserRouter><AuthenticatedRoutes /></BrowserRouter>; }
