@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { OrgProfile, GoldSetEvaluation } from '../types';
 import { Award, CheckCircle, Percent, BarChart3, Info } from 'lucide-react';
 import { apiFetch } from '../api';
+import { TableSkeleton } from './LoadingSkeleton';
 
 interface GoldSetEvalViewProps {
   profile: OrgProfile | null;
@@ -48,9 +49,7 @@ export const GoldSetEvalView: React.FC<GoldSetEvalViewProps> = ({ profile }) => 
       </div>
 
       {loading ? (
-        <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
-          Evaluating practitioner alignment...
-        </div>
+        <TableSkeleton rows={4} />
       ) : evaluation ? (
         <div>
           {/* Overlap Summary Card */}

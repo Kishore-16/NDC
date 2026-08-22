@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { OrgProfile, NegativeTestItem } from '../types';
 import { Ban, AlertTriangle, ShieldX, HelpCircle, CheckCircle2 } from 'lucide-react';
 import { apiFetch } from '../api';
+import { TriageSkeleton } from './LoadingSkeleton';
 
 interface NegativeTestViewProps {
   profile: OrgProfile | null;
@@ -48,9 +49,7 @@ export const NegativeTestView: React.FC<NegativeTestViewProps> = ({ profile }) =
       </div>
 
       {loading ? (
-        <div className="glass-panel" style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
-          Loading negative test candidates...
-        </div>
+        <TriageSkeleton count={2} />
       ) : items.length === 0 ? (
         <div className="glass-panel" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)' }}>
           No high-CVSS excluded vulnerabilities found for this profile.

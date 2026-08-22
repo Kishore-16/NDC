@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { OrgProfile, ComparisonItem } from '../types';
 import { GitCompare, ArrowRightLeft, ShieldAlert, Sparkles, Building2, Rocket } from 'lucide-react';
 import { apiFetch } from '../api';
+import { TableSkeleton } from './LoadingSkeleton';
 
 interface CompareModeProps {
   profiles: OrgProfile[];
@@ -140,8 +141,8 @@ export const CompareMode: React.FC<CompareModeProps> = ({ profiles }) => {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={4} style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                  Calculating comparison across profiles...
+                <td colSpan={4} style={{ padding: '16px' }}>
+                  <TableSkeleton rows={3} />
                 </td>
               </tr>
             ) : comparison.map((item) => (

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { LandingAuth } from './components/LandingAuth';
@@ -29,6 +29,9 @@ function ProtectedWorkspace({ onSignOut, user }: { onSignOut: () => void; user: 
   const [customProfileIds, setCustomProfileIds] = useState<string[]>([]);
   const [top5, setTop5] = useState<TriageItem[]>([]);
   const [inventory, setInventory] = useState<TriageItem[]>([]);
+  const [triageLoading, setTriageLoading] = useState(true);
+  const [showingCachedTriage, setShowingCachedTriage] = useState(false);
+  const triageCache = useRef(new Map<string, { top5: TriageItem[]; inventory: TriageItem[] }>());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestedProfileId = searchParams.get('profile');
@@ -54,12 +57,26 @@ function ProtectedWorkspace({ onSignOut, user }: { onSignOut: () => void; user: 
   useEffect(() => {
     if (!activeProfile) return;
     const controller = new AbortController();
+    const cached = triageCache.current.get(activeProfile.org_id);
+    setTriageLoading(true);
+    setShowingCachedTriage(Boolean(cached));
+    if (cached) {
+      setTop5(cached.top5);
+      setInventory(cached.inventory);
+    } else {
+      setTop5([]);
+      setInventory([]);
+    }
     const loadTriage = async () => {
       try {
         const response = await apiFetch('/api/triage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal, body: JSON.stringify({ profile_id: activeProfile.org_id }) });
         if (!response.ok) throw new Error('Unable to calculate triage for this profile.');
-        const result = await response.json(); setTop5(result.top_5 || []); setInventory(result.inventory || []);
+        const result = await response.json();
+        const nextData = { top5: result.top_5 || [], inventory: result.inventory || [] };
+        triageCache.current.set(activeProfile.org_id, nextData);
+        setTop5(nextData.top5); setInventory(nextData.inventory); setShowingCachedTriage(false);
       } catch (reason) { if ((reason as Error).name !== 'AbortError') setError(reason instanceof Error ? reason.message : 'Unable to load triage data.'); }
+      finally { if (!controller.signal.aborted) setTriageLoading(false); }
     };
     void loadTriage(); return () => controller.abort();
   }, [activeProfile]);
@@ -76,7 +93,7 @@ function ProtectedWorkspace({ onSignOut, user }: { onSignOut: () => void; user: 
   if (loading) return <LoadingState message="Loading organisation profiles…" />;
   if (error && profiles.length === 0) return <div className="workspace-state"><AlertCircle size={32} /><h2>Workspace unavailable</h2><p>{error}</p><button className="btn-primary" onClick={() => void refreshProfiles()}><RefreshCw size={16} /> Retry</button></div>;
   if (!activeProfile) return <div className="workspace-state"><AlertCircle size={32} /><h2>No organisation profiles found</h2></div>;
-  const context: WorkspaceContext = { profiles, activeProfile, selectProfile, top5, inventory, onProfileUploaded, customProfileIds, deleteCustomProfile };
+  const context: WorkspaceContext = { profiles, activeProfile, selectProfile, top5, inventory, triageLoading, showingCachedTriage, onProfileUploaded, customProfileIds, deleteCustomProfile };
   return <WorkspaceShell activeProfile={activeProfile} user={user} onSignOut={onSignOut}>{error && <div className="workspace-inline-error"><AlertCircle size={17} /> {error}</div>}<Outlet context={context} /></WorkspaceShell>;
 }
 
