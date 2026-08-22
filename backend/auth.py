@@ -39,8 +39,18 @@ load_local_env()
 JWT_SECRET = os.getenv("JWT_SECRET", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+
+def get_frontend_url(override_url: Optional[str] = None) -> str:
+    production_url = "https://ndc-git-main-arvindkishore931-9199s-projects.vercel.app"
+    is_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
+    url = (override_url or os.getenv("FRONTEND_URL") or "").rstrip("/")
+    if not url:
+        return production_url if is_render else "http://localhost:5173"
+    if is_render and ("localhost" in url or "127.0.0.1" in url):
+        return production_url
+    return url
+
 
 
 def _b64(value: bytes) -> str:
