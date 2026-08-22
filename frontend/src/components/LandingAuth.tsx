@@ -93,6 +93,20 @@ export function LandingAuth({ onEnterApp }: LandingAuthProps) {
   const [authError, setAuthError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const toggleThemeWithTransition = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const root = document.documentElement;
+    const rect = event.currentTarget.getBoundingClientRect();
+    root.style.setProperty('--theme-reveal-x', `${rect.left + rect.width / 2}px`);
+    root.style.setProperty('--theme-reveal-y', `${rect.top + rect.height / 2}px`);
+    const updateTheme = () => setTheme((current) => current === 'dark' ? 'light' : 'dark');
+    const documentWithTransition = document as Document & { startViewTransition?: (callback: () => void) => void };
+    if (!documentWithTransition.startViewTransition || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      updateTheme();
+      return;
+    }
+    documentWithTransition.startViewTransition(updateTheme);
+  };
+
   useEffect(() => {
     document.documentElement.classList.toggle('app-light', theme === 'light');
     return () => document.documentElement.classList.remove('app-light');
@@ -148,7 +162,7 @@ export function LandingAuth({ onEnterApp }: LandingAuthProps) {
           <button className="nav-cta" onClick={() => openAuth('signup')}>Start free <ArrowRight size={15} /></button>
         </nav>
         <div className="nav-actions">
-          <button className="theme-button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle color theme">
+          <button className="theme-button" onClick={toggleThemeWithTransition} aria-label="Toggle color theme">
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
           <button className="menu-button" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle navigation">{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
