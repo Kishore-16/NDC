@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
+import CrtHeroSequence from './CrtHeroSequence';
 
 type AuthMode = 'signin' | 'signup';
 
@@ -151,17 +152,19 @@ export function LandingAuth({ onEnterApp }: LandingAuthProps) {
       </header>
 
       {!authMode ? (
-        <main className="hero-content" id="platform">
-          <div className="eyebrow"><Sparkles size={14} /> Intelligent vulnerability operations</div>
-          <h1>Know what to fix.<br /><span>Before it matters.</span></h1>
-          <p className="hero-copy">Nexora turns your vulnerability noise into a focused, risk-aware queue—built around the assets and threats that matter to your organisation.</p>
-          <div className="hero-actions">
-            <button className="primary-action" onClick={() => openAuth('signup')}>Start securing your stack <ArrowRight size={17} /></button>
-            <button className="secondary-action" onClick={() => openAuth('signin')}>Open workspace</button>
-          </div>
-          <div className="proof-row"><span><Check size={14} /> No credit card</span><span><Check size={14} /> Setup in minutes</span><span><Check size={14} /> Built for teams</span></div>
-          <section className="metric-strip" id="security">
-            <div><strong>10x</strong><span>faster prioritisation</span></div><div><strong>24/7</strong><span>risk signal coverage</span></div><div><strong>1 view</strong><span>for your attack surface</span></div>
+        <main id="platform">
+          <CrtHeroSequence />
+          <section className="landing-overview" id="security">
+            <div className="eyebrow"><Sparkles size={14} /> Intelligent vulnerability operations</div>
+            <p className="hero-copy">Nexora turns your vulnerability noise into a focused, risk-aware queue—built around the assets and threats that matter to your organisation.</p>
+            <div className="hero-actions">
+              <button className="primary-action" onClick={() => openAuth('signup')}>Start securing your stack <ArrowRight size={17} /></button>
+              <button className="secondary-action" onClick={() => openAuth('signin')}>Open workspace</button>
+            </div>
+            <div className="proof-row"><span><Check size={14} /> No credit card</span><span><Check size={14} /> Setup in minutes</span><span><Check size={14} /> Built for teams</span></div>
+            <section className="metric-strip">
+              <div><strong>10x</strong><span>faster prioritisation</span></div><div><strong>24/7</strong><span>risk signal coverage</span></div><div><strong>1 view</strong><span>for your attack surface</span></div>
+            </section>
           </section>
         </main>
       ) : (
