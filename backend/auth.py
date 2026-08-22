@@ -12,7 +12,7 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Tuple, Dict, Any, Optional 
 
 
 def load_local_env(override: bool = False) -> None:
