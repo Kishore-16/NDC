@@ -14,6 +14,15 @@ class OrgProfile(BaseModel):
     weight_modifiers: WeightModifiers
     critical_products: List[str]
 
+
+class CustomProfileInput(BaseModel):
+    """Client-supplied organisation context; the server owns the profile ID."""
+    name: str
+    sector: str
+    risk_appetite: str
+    weight_modifiers: WeightModifiers
+    critical_products: List[str]
+
 class VulnerabilityRecord(BaseModel):
     cve_id: str
     product_name: str

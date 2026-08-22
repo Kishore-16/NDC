@@ -97,7 +97,7 @@ def check_password(password: str, stored: str) -> bool:
         return False
 
 
-def get_users_collection():
+def get_database():
     # Refresh local settings here because MongoDB is the only configuration
     # needed on every request and it is commonly corrected while the API runs.
     load_local_env(override=True)
@@ -121,9 +121,20 @@ def get_users_collection():
         raise RuntimeError("pymongo is required. Install backend requirements before starting the API.") from exc
     client = MongoClient(uri, serverSelectionTimeoutMS=5000)
     client.admin.command("ping")
-    users = client[database].users
+    return client[database]
+
+
+def get_users_collection():
+    users = get_database().users
     users.create_index("email", unique=True)
     return users
+
+
+def get_organisation_profiles_collection():
+    profiles = get_database().organisation_profiles
+    profiles.create_index("owner_user_id")
+    profiles.create_index("profile.org_id", unique=True)
+    return profiles
 
 
 def google_authorization_url() -> str:

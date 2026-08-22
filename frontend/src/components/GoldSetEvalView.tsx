@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { OrgProfile, GoldSetEvaluation } from '../types';
 import { Award, CheckCircle, Percent, BarChart3, Info } from 'lucide-react';
-import { API_BASE_URL } from '../config';
+import { apiFetch } from '../api';
 
 interface GoldSetEvalViewProps {
   profile: OrgProfile | null;
@@ -21,7 +21,7 @@ export const GoldSetEvalView: React.FC<GoldSetEvalViewProps> = ({ profile }) => 
     if (!profile) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/gold-set-eval/${profile.org_id}`);
+      const res = await apiFetch(`/api/gold-set-eval/${encodeURIComponent(profile.org_id)}`);
       const data = await res.json();
       setEvaluation(data.evaluation || null);
     } catch (err) {

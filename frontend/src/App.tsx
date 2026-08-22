@@ -4,7 +4,7 @@ import { AlertCircle, RefreshCw } from 'lucide-react';
 import { LandingAuth } from './components/LandingAuth';
 import { WorkspaceShell } from './components/WorkspaceShell';
 import { AppOverview, ComparePage, GoldSetPage, InventoryPage, NegativeTestPage, ProfileCustomPage, ProfilesPage, TriageDetailPage, TriagePage, WorkspaceContext } from './components/WorkspacePages';
-import { API_BASE_URL } from './config';
+import { apiFetch } from './api';
 import { OrgProfile, TriageItem } from './types';
 
 const AUTH_STORAGE_KEY = 'nexora_auth_token';
@@ -42,10 +42,11 @@ function ProtectedWorkspace({ onSignOut, user }: { onSignOut: () => void; user: 
   const refreshProfiles = async () => {
     setLoading(true); setError(null);
     try {
-      const [profilesResponse, customIdsResponse] = await Promise.all([fetch(`${API_BASE_URL}/api/profiles`), fetch(`${API_BASE_URL}/api/custom-profile-ids`)]);
+      const profilesResponse = await apiFetch('/api/profiles');
       if (!profilesResponse.ok) throw new Error('Failed to load organisation profiles.');
-      setProfiles(await profilesResponse.json());
-      setCustomProfileIds(customIdsResponse.ok ? await customIdsResponse.json() : []);
+      const result = await profilesResponse.json();
+      setProfiles(result.profiles || []);
+      setCustomProfileIds(result.custom_profile_ids || []);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Cannot connect to the backend server.'); }
     finally { setLoading(false); }
   };
@@ -55,7 +56,7 @@ function ProtectedWorkspace({ onSignOut, user }: { onSignOut: () => void; user: 
     const controller = new AbortController();
     const loadTriage = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/triage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal, body: JSON.stringify({ profile: activeProfile }) });
+        const response = await apiFetch('/api/triage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal, body: JSON.stringify({ profile_id: activeProfile.org_id }) });
         if (!response.ok) throw new Error('Unable to calculate triage for this profile.');
         const result = await response.json(); setTop5(result.top_5 || []); setInventory(result.inventory || []);
       } catch (reason) { if ((reason as Error).name !== 'AbortError') setError(reason instanceof Error ? reason.message : 'Unable to load triage data.'); }
@@ -64,7 +65,7 @@ function ProtectedWorkspace({ onSignOut, user }: { onSignOut: () => void; user: 
   }, [activeProfile]);
   const onProfileUploaded = (profile: OrgProfile) => { setProfiles((current) => [...current.filter((item) => item.org_id !== profile.org_id), profile]); setCustomProfileIds((current) => [...new Set([...current, profile.org_id])]); selectProfile(profile); };
   const deleteCustomProfile = async (profile: OrgProfile) => {
-    const response = await fetch(`${API_BASE_URL}/api/profiles/${encodeURIComponent(profile.org_id)}`, { method: 'DELETE' });
+    const response = await apiFetch(`/api/profiles/${encodeURIComponent(profile.org_id)}`, { method: 'DELETE' });
     const result = await response.json();
     if (!response.ok) throw new Error(result.detail || 'Unable to delete this custom profile.');
     const remaining = profiles.filter((item) => item.org_id !== profile.org_id);

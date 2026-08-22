@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { OrgProfile, NegativeTestItem } from '../types';
 import { Ban, AlertTriangle, ShieldX, HelpCircle, CheckCircle2 } from 'lucide-react';
-import { API_BASE_URL } from '../config';
+import { apiFetch } from '../api';
 
 interface NegativeTestViewProps {
   profile: OrgProfile | null;
@@ -21,7 +21,7 @@ export const NegativeTestView: React.FC<NegativeTestViewProps> = ({ profile }) =
     if (!profile) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/negative-test/${profile.org_id}`);
+      const res = await apiFetch(`/api/negative-test/${encodeURIComponent(profile.org_id)}`);
       const data = await res.json();
       setItems(data.negative_tests || []);
     } catch (err) {

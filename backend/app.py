@@ -9,11 +9,12 @@ import urllib.parse
 
 from backend.auth import (
     FRONTEND_URL, check_password, create_token, exchange_google_code,
-    get_users_collection, google_authorization_url, hash_password, verify_token,
+    get_organisation_profiles_collection, get_users_collection, google_authorization_url,
+    hash_password, verify_token,
 )
 
 from backend.models import (
-    OrgProfile, TriageItem, NegativeTestItem, GoldSetEvaluation,
+    CustomProfileInput, OrgProfile, TriageItem, NegativeTestItem, GoldSetEvaluation,
     ComparisonItem
 )
 from backend.engine import (
@@ -41,7 +42,6 @@ app.add_middleware(
 # Cache loaded dataset and built-in profiles
 VULN_DF = load_vulnerabilities("data/vulnerabilities.csv")
 BUILTIN_PROFILES = {p.org_id: p for p in load_profiles("data/profiles.json")}
-CUSTOM_PROFILES: Dict[str, OrgProfile] = {}
 
 def user_response(user: Dict[str, Any]) -> Dict[str, str]:
     return {"id": str(user["_id"]), "email": user["email"], "name": user.get("name", "")}
@@ -133,44 +133,39 @@ def google_callback(code: str, state: str):
 def auth_me(request: Request):
     return {"user": user_response(get_current_user(request))}
 
-def resolve_profile(profile_data: Any) -> OrgProfile:
-    if isinstance(profile_data, str):
-        if profile_data in BUILTIN_PROFILES:
-            return BUILTIN_PROFILES[profile_data]
-        elif profile_data in CUSTOM_PROFILES:
-            return CUSTOM_PROFILES[profile_data]
-        else:
-            raise HTTPException(status_code=404, detail=f"Profile ID '{profile_data}' not found.")
-    elif isinstance(profile_data, dict):
-        try:
-            return OrgProfile(**profile_data)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid profile schema: {str(e)}")
-    else:
-        raise HTTPException(status_code=400, detail="Invalid profile payload format.")
+def resolve_profile(profile_id: str, user: Dict[str, Any]) -> OrgProfile:
+    """Return a shared demo profile or a custom profile owned by this user only."""
+    if profile_id in BUILTIN_PROFILES:
+        return BUILTIN_PROFILES[profile_id]
+    profile_document = get_organisation_profiles_collection().find_one({
+        "owner_user_id": str(user["_id"]), "profile.org_id": profile_id,
+    })
+    if not profile_document:
+        # Do not disclose whether another account owns this profile.
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return OrgProfile(**profile_document["profile"])
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "total_vulnerabilities": len(VULN_DF), "profiles_count": len(BUILTIN_PROFILES) + len(CUSTOM_PROFILES)}
+    return {"status": "ok", "total_vulnerabilities": len(VULN_DF), "profiles_count": len(BUILTIN_PROFILES)}
 
-@app.get("/api/profiles", response_model=List[OrgProfile])
-def get_all_profiles():
-    all_p = list(BUILTIN_PROFILES.values()) + list(CUSTOM_PROFILES.values())
-    return all_p
-
-@app.get("/api/custom-profile-ids", response_model=List[str])
-def get_custom_profile_ids():
-    """Expose only identifiers so the UI can distinguish removable profiles."""
-    return list(CUSTOM_PROFILES.keys())
+@app.get("/api/profiles")
+def get_all_profiles(request: Request):
+    user = get_current_user(request)
+    custom_profiles = list(get_organisation_profiles_collection().find(
+        {"owner_user_id": str(user["_id"])}, {"_id": 0, "profile": 1}
+    ))
+    return {
+        "profiles": list(BUILTIN_PROFILES.values()) + [item["profile"] for item in custom_profiles],
+        "custom_profile_ids": [item["profile"]["org_id"] for item in custom_profiles],
+    }
 
 @app.post("/api/triage")
-def run_triage(payload: Dict[str, Any] = Body(...)):
-    profile_input = payload.get("profile") or payload.get("profile_id")
-    if not profile_input:
-        # Default to Agile Cloud Tech Startup (ORG-002)
-        profile = BUILTIN_PROFILES.get("ORG-002", list(BUILTIN_PROFILES.values())[0])
-    else:
-        profile = resolve_profile(profile_input)
+def run_triage(request: Request, payload: Dict[str, Any] = Body(...)):
+    profile_id = payload.get("profile_id")
+    if not isinstance(profile_id, str) or not profile_id:
+        raise HTTPException(status_code=400, detail="profile_id is required")
+    profile = resolve_profile(profile_id, get_current_user(request))
         
     top_5, all_inventory = triage_vulnerabilities(profile, VULN_DF)
     negatives = get_negative_tests(profile, VULN_DF)
@@ -186,12 +181,12 @@ def run_triage(payload: Dict[str, Any] = Body(...)):
     }
 
 @app.post("/api/compare")
-def compare_orgs(payload: Dict[str, Any] = Body(...)):
+def compare_orgs(request: Request, payload: Dict[str, Any] = Body(...)):
+    user = get_current_user(request)
     p1_input = payload.get("profile_1") or payload.get("org_id_1") or "ORG-001"
     p2_input = payload.get("profile_2") or payload.get("org_id_2") or "ORG-002"
-    
-    p1 = resolve_profile(p1_input)
-    p2 = resolve_profile(p2_input)
+    p1 = resolve_profile(p1_input, user)
+    p2 = resolve_profile(p2_input, user)
     
     comparison = compare_profiles(p1, p2, VULN_DF)
     return {
@@ -201,27 +196,44 @@ def compare_orgs(payload: Dict[str, Any] = Body(...)):
     }
 
 @app.get("/api/negative-test/{profile_id}")
-def get_negative_test_for_profile(profile_id: str):
-    profile = resolve_profile(profile_id)
+def get_negative_test_for_profile(profile_id: str, request: Request):
+    profile = resolve_profile(profile_id, get_current_user(request))
     negatives = get_negative_tests(profile, VULN_DF)
     return {"profile": profile, "negative_tests": negatives}
 
 @app.get("/api/gold-set-eval/{profile_id}")
-def get_gold_set_eval_for_profile(profile_id: str):
-    profile = resolve_profile(profile_id)
+def get_gold_set_eval_for_profile(profile_id: str, request: Request):
+    profile = resolve_profile(profile_id, get_current_user(request))
     eval_res = evaluate_gold_set(profile, "data/gold_set.csv")
     return {"profile": profile, "evaluation": eval_res}
 
-@app.post("/api/upload-profile", response_model=OrgProfile)
-def upload_profile(profile: OrgProfile):
-    CUSTOM_PROFILES[profile.org_id] = profile
-    return profile
+def create_owned_profile(profile: CustomProfileInput, request: Request) -> OrgProfile:
+    user = get_current_user(request)
+    from bson import ObjectId
+    profile_id = f"CUST-{ObjectId()}"
+    profile_data = {"org_id": profile_id, **profile.dict()}
+    get_organisation_profiles_collection().insert_one({
+        "owner_user_id": str(user["_id"]), "profile": profile_data,
+        "created_at": time.time(), "updated_at": time.time(),
+    })
+    return OrgProfile(**profile_data)
+
+@app.post("/api/profiles", response_model=OrgProfile)
+def create_profile(profile: CustomProfileInput, request: Request):
+    return create_owned_profile(profile, request)
+
+@app.post("/api/upload-profile", response_model=OrgProfile, include_in_schema=False)
+def upload_profile_compatibility(profile: CustomProfileInput, request: Request):
+    return create_owned_profile(profile, request)
 
 @app.delete("/api/profiles/{profile_id}")
-def delete_custom_profile(profile_id: str):
+def delete_custom_profile(profile_id: str, request: Request):
+    user = get_current_user(request)
     if profile_id in BUILTIN_PROFILES:
         raise HTTPException(status_code=403, detail="Built-in demo profiles cannot be deleted")
-    if profile_id not in CUSTOM_PROFILES:
+    result = get_organisation_profiles_collection().delete_one({
+        "owner_user_id": str(user["_id"]), "profile.org_id": profile_id,
+    })
+    if not result.deleted_count:
         raise HTTPException(status_code=404, detail="Custom profile not found")
-    del CUSTOM_PROFILES[profile_id]
     return {"detail": "Custom profile deleted"}

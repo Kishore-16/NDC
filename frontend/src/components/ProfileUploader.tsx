@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { OrgProfile } from '../types';
 import { Upload, X, Check, FileJson, AlertCircle } from 'lucide-react';
-import { API_BASE_URL } from '../config';
+import { apiFetch } from '../api';
 
 interface ProfileUploaderProps {
   onProfileUploaded: (profile: OrgProfile) => void;
@@ -10,7 +10,6 @@ interface ProfileUploaderProps {
 }
 
 const DEFAULT_SAMPLE_JSON = `{
-  "org_id": "ORG-004",
   "name": "Unseen Profile D - E-Commerce Retailer",
   "sector": "E-Commerce",
   "risk_appetite": "Medium",
@@ -52,7 +51,7 @@ export const ProfileUploader: React.FC<ProfileUploaderProps> = ({
     setUploading(true);
     try {
       const parsed = JSON.parse(jsonText);
-      const res = await fetch(`${API_BASE_URL}/api/upload-profile`, {
+      const res = await apiFetch('/api/profiles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(parsed)

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { OrgProfile, ComparisonItem } from '../types';
 import { GitCompare, ArrowRightLeft, ShieldAlert, Sparkles, Building2, Rocket } from 'lucide-react';
-import { API_BASE_URL } from '../config';
+import { apiFetch } from '../api';
 
 interface CompareModeProps {
   profiles: OrgProfile[];
@@ -23,7 +23,7 @@ export const CompareMode: React.FC<CompareModeProps> = ({ profiles }) => {
   const fetchComparison = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/compare`, {
+      const res = await apiFetch('/api/compare', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ org_id_1: orgId1, org_id_2: orgId2 })
