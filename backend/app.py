@@ -13,9 +13,10 @@ import urllib.request
 
 from backend.auth import (
     FRONTEND_URL, check_password, create_token, exchange_google_code,
-    get_organisation_profiles_collection, get_users_collection, google_authorization_url,
-    hash_password, verify_token,
+    get_allowed_frontend_urls, get_frontend_url, get_organisation_profiles_collection, get_users_collection,
+    google_authorization_url, hash_password, verify_token,
 )
+
 
 from backend.models import (
     CustomProfileInput, OrgProfile, TriageItem, NegativeTestItem, GoldSetEvaluation,
@@ -32,16 +33,15 @@ app = FastAPI(
     description="Deterministic vulnerability decision engine & triage platform"
 )
 
-# Enable CORS for local Vite frontend
+# Enable CORS for Vite frontend (local and deployed)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "http://localhost:5173"],
-    # Vite chooses the next free port (for example 5174) when 5173 is occupied.
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origins=get_allowed_frontend_urls(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Cache loaded dataset and built-in profiles
 VULN_DF = load_vulnerabilities("data/vulnerabilities.csv")
@@ -110,16 +110,21 @@ def login(payload: Dict[str, str] = Body(...)):
         raise auth_service_error(exc) from exc
 
 @app.get("/api/auth/google")
-def google_login():
+def google_login(request: Request, redirect_to: Optional[str] = None):
     try:
-        return RedirectResponse(google_authorization_url())
+        target_frontend = redirect_to or request.headers.get("referer") or request.headers.get("origin")
+        if target_frontend and "accounts.google.com" in target_frontend:
+            target_frontend = None
+        effective_url = get_frontend_url(target_frontend)
+        return RedirectResponse(google_authorization_url(effective_url))
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 @app.get("/api/auth/google/callback")
 def google_callback(code: str, state: str):
     try:
-        profile = exchange_google_code(code, state)
+        profile, stored_frontend_url = exchange_google_code(code, state)
+        effective_url = get_frontend_url(stored_frontend_url)
         users = get_users_collection()
         user = users.find_one_and_update(
             {"email": profile["email"].lower()},
@@ -129,9 +134,12 @@ def google_callback(code: str, state: str):
         if user is None:
             user = users.find_one({"email": profile["email"].lower()})
         token = create_token(user)
-        return RedirectResponse(f"{FRONTEND_URL}/?auth_token={urllib.parse.quote(token)}")
+        return RedirectResponse(f"{effective_url}/?auth_token={urllib.parse.quote(token)}")
     except Exception as exc:
-        return RedirectResponse(f"{FRONTEND_URL}/?auth_error={urllib.parse.quote(str(exc))}")
+        effective_url = get_frontend_url()
+        return RedirectResponse(f"{effective_url}/?auth_error={urllib.parse.quote(str(exc))}")
+
+
 
 @app.get("/api/auth/me")
 def auth_me(request: Request):
