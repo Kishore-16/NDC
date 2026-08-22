@@ -82,6 +82,17 @@ export const App: React.FC = () => {
     setActiveTab('triage');
   };
 
+  const handleSignOut = () => {
+    localStorage.removeItem('nexora_auth_token');
+    setAuthToken(null);
+    setProfiles([]);
+    setActiveProfile(null);
+    setTop5([]);
+    setInventory([]);
+    setError(null);
+    setLoading(false);
+  };
+
   if (!authToken) {
     return <LandingAuth onEnterApp={(token) => { localStorage.setItem('nexora_auth_token', token); setAuthToken(token); }} />;
   }
@@ -95,6 +106,7 @@ export const App: React.FC = () => {
         setActiveTab={setActiveTab}
         activeProfile={activeProfile}
         onOpenUpload={() => setShowUploadModal(true)}
+        onSignOut={handleSignOut}
       />
 
       {/* Main Container */}

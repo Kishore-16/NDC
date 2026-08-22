@@ -1,12 +1,13 @@
 import React from 'react';
 import { OrgProfile } from '../types';
-import { ShieldCheck, Layers, GitCompare, Ban, Award, Database, Upload } from 'lucide-react';
+import { ShieldCheck, Layers, GitCompare, Ban, Award, Database, Upload, LogOut } from 'lucide-react';
 
 interface HeaderProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   activeProfile: OrgProfile | null;
   onOpenUpload: () => void;
+  onSignOut: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -14,6 +15,7 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveTab,
   activeProfile,
   onOpenUpload,
+  onSignOut,
 }) => {
   return (
     <header className="glass-panel" style={{ borderRadius: '0 0 16px 16px', borderTop: 'none', padding: '16px 32px', marginBottom: '24px' }}>
@@ -142,6 +144,15 @@ export const Header: React.FC<HeaderProps> = ({
 
           <button onClick={onOpenUpload} className="btn-secondary" style={{ padding: '8px 14px', fontSize: '0.85rem' }}>
             <Upload size={16} /> Custom Profile D
+          </button>
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="btn-secondary"
+            style={{ padding: '8px 14px', fontSize: '0.85rem', color: '#fca5a5', borderColor: 'rgba(248, 113, 113, 0.45)' }}
+            aria-label="Sign out"
+          >
+            <LogOut size={16} /> Sign out
           </button>
         </div>
 
