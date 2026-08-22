@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-def load_local_env() -> None:
+def load_local_env(override: bool = False) -> None:
+    """Load local development settings without exposing them to the frontend.
+
+    ``override`` is used for database connections so edits to .env.local do
+    not leave a long-running local API process using a stale MongoDB URI.
+    """
     env_file = Path(__file__).resolve().parents[1] / ".env.local"
     if not env_file.exists():
         return
@@ -24,7 +29,10 @@ def load_local_env() -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if override or key not in os.environ:
+            os.environ[key] = value
 
 
 load_local_env()
@@ -90,10 +98,18 @@ def check_password(password: str, stored: str) -> bool:
 
 
 def get_users_collection():
+    # Refresh local settings here because MongoDB is the only configuration
+    # needed on every request and it is commonly corrected while the API runs.
+    load_local_env(override=True)
     uri = os.getenv("MONGODB_URI", "")
     database = os.getenv("MONGODB_DB_NAME", "nexora")
     if not uri:
         raise RuntimeError("MONGODB_URI is not configured in .env.local")
+    if not (uri.startswith("mongodb://") or uri.startswith("mongodb+srv://")):
+        raise RuntimeError(
+            "MONGODB_URI must start with mongodb:// or mongodb+srv://. "
+            "For Atlas, use mongodb+srv:// (with two forward slashes)."
+        )
     if "<db_username>" in uri or "<db_password>" in uri:
         raise RuntimeError(
             "MONGODB_URI still contains <db_username> or <db_password>. "

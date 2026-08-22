@@ -1,18 +1,24 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { OrgProfile } from '../types';
-import { Building2, Rocket, Zap, Shield, ChevronRight, Star } from 'lucide-react';
+import { Building2, Rocket, Zap, Shield, ChevronRight, Star, Trash2 } from 'lucide-react';
 
 interface ProfileSelectorProps {
   profiles: OrgProfile[];
   activeProfile: OrgProfile | null;
   onSelectProfile: (profile: OrgProfile) => void;
+  customProfileIds?: string[];
+  onDeleteProfile?: (profile: OrgProfile) => Promise<void>;
 }
 
 export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
   profiles,
   activeProfile,
   onSelectProfile,
+  customProfileIds = [],
+  onDeleteProfile,
 }) => {
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const getIcon = (sector: string, orgId: string) => {
     if (orgId === 'ORG-001' || sector.toLowerCase().includes('bank') || sector.toLowerCase().includes('financial')) {
       return <Building2 size={20} color="#60a5fa" />;
@@ -38,6 +44,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
         {profiles.map((p) => {
           const isSelected = activeProfile?.org_id === p.org_id;
+          const isCustom = customProfileIds.includes(p.org_id);
           const cvssPct = Math.round(p.weight_modifiers.cvss_weight * 100);
           const kevPct = Math.round(p.weight_modifiers.cisa_kev_weight * 100);
           const epssPct = Math.round(p.weight_modifiers.first_epss_weight * 100);
@@ -72,6 +79,23 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
                 }}>
                   ACTIVE TRIAGE
                 </div>
+              )}
+              {isCustom && onDeleteProfile && (
+                <button
+                  type="button"
+                  onClick={async (event) => {
+                    event.stopPropagation();
+                    if (!window.confirm(`Remove custom profile “${p.name}”? This cannot be undone.`)) return;
+                    setDeletingId(p.org_id); setDeleteError(null);
+                    try { await onDeleteProfile(p); } catch (error) { setDeleteError(error instanceof Error ? error.message : 'Unable to delete this profile.'); }
+                    finally { setDeletingId(null); }
+                  }}
+                  className="custom-profile-delete"
+                  aria-label={`Remove ${p.name}`}
+                  disabled={deletingId === p.org_id}
+                >
+                  <Trash2 size={13} /> {deletingId === p.org_id ? 'Removing…' : 'Remove'}
+                </button>
               )}
 
               {/* Profile Header */}
@@ -139,6 +163,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
           );
         })}
       </div>
+      {deleteError && <p className="profile-delete-error">{deleteError}</p>}
     </div>
   );
 };

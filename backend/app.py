@@ -158,6 +158,11 @@ def get_all_profiles():
     all_p = list(BUILTIN_PROFILES.values()) + list(CUSTOM_PROFILES.values())
     return all_p
 
+@app.get("/api/custom-profile-ids", response_model=List[str])
+def get_custom_profile_ids():
+    """Expose only identifiers so the UI can distinguish removable profiles."""
+    return list(CUSTOM_PROFILES.keys())
+
 @app.post("/api/triage")
 def run_triage(payload: Dict[str, Any] = Body(...)):
     profile_input = payload.get("profile") or payload.get("profile_id")
@@ -211,3 +216,12 @@ def get_gold_set_eval_for_profile(profile_id: str):
 def upload_profile(profile: OrgProfile):
     CUSTOM_PROFILES[profile.org_id] = profile
     return profile
+
+@app.delete("/api/profiles/{profile_id}")
+def delete_custom_profile(profile_id: str):
+    if profile_id in BUILTIN_PROFILES:
+        raise HTTPException(status_code=403, detail="Built-in demo profiles cannot be deleted")
+    if profile_id not in CUSTOM_PROFILES:
+        raise HTTPException(status_code=404, detail="Custom profile not found")
+    del CUSTOM_PROFILES[profile_id]
+    return {"detail": "Custom profile deleted"}

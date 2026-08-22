@@ -6,6 +6,7 @@ import { API_BASE_URL } from '../config';
 interface ProfileUploaderProps {
   onProfileUploaded: (profile: OrgProfile) => void;
   onClose: () => void;
+  closeAfterUpload?: boolean;
 }
 
 const DEFAULT_SAMPLE_JSON = `{
@@ -27,6 +28,7 @@ const DEFAULT_SAMPLE_JSON = `{
 export const ProfileUploader: React.FC<ProfileUploaderProps> = ({
   onProfileUploaded,
   onClose,
+  closeAfterUpload = true,
 }) => {
   const [jsonText, setJsonText] = useState<string>(DEFAULT_SAMPLE_JSON);
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +63,7 @@ export const ProfileUploader: React.FC<ProfileUploaderProps> = ({
       }
       const newProfile: OrgProfile = await res.json();
       onProfileUploaded(newProfile);
-      onClose();
+      if (closeAfterUpload) onClose();
     } catch (err: any) {
       setError(err.message || 'Invalid JSON format or schema error.');
     } finally {
