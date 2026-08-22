@@ -1,7 +1,16 @@
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from typing import List, Optional, Dict, Any
 import json
+import os
+import time
+import urllib.parse
+
+from backend.auth import (
+    FRONTEND_URL, check_password, create_token, exchange_google_code,
+    get_users_collection, google_authorization_url, hash_password, verify_token,
+)
 
 from backend.models import (
     OrgProfile, TriageItem, NegativeTestItem, GoldSetEvaluation,
@@ -21,7 +30,9 @@ app = FastAPI(
 # Enable CORS for local Vite frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[FRONTEND_URL, "http://localhost:5173"],
+    # Vite chooses the next free port (for example 5174) when 5173 is occupied.
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,6 +42,96 @@ app.add_middleware(
 VULN_DF = load_vulnerabilities("data/vulnerabilities.csv")
 BUILTIN_PROFILES = {p.org_id: p for p in load_profiles("data/profiles.json")}
 CUSTOM_PROFILES: Dict[str, OrgProfile] = {}
+
+def user_response(user: Dict[str, Any]) -> Dict[str, str]:
+    return {"id": str(user["_id"]), "email": user["email"], "name": user.get("name", "")}
+
+
+def auth_service_error(exc: Exception) -> HTTPException:
+    """Return a useful, non-secret diagnostic when MongoDB is unavailable."""
+    message = str(exc)
+    if "MONGODB_URI" in message or "pymongo is required" in message:
+        detail = message
+    else:
+        detail = (
+            "Cannot connect to MongoDB. Verify the Atlas URI and database-user password, "
+            "then add your current IP address to Atlas Network Access."
+        )
+    return HTTPException(status_code=503, detail=detail)
+
+def get_current_user(request: Request) -> Dict[str, Any]:
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Sign in required")
+    try:
+        claims = verify_token(authorization[7:])
+        users = get_users_collection()
+        from bson import ObjectId
+        user = users.find_one({"_id": ObjectId(claims["sub"])})
+        if not user:
+            raise ValueError("User not found")
+        return user
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired session") from exc
+
+@app.post("/api/auth/register")
+def register(payload: Dict[str, str] = Body(...)):
+    name, email, password = payload.get("name", "").strip(), payload.get("email", "").strip().lower(), payload.get("password", "")
+    if not name or not email or len(password) < 8:
+        raise HTTPException(status_code=400, detail="Name, a valid email, and an 8-character password are required")
+    try:
+        users = get_users_collection()
+        if users.find_one({"email": email}):
+            raise HTTPException(status_code=409, detail="An account already exists for this email")
+        user = {"name": name, "email": email, "password_hash": hash_password(password), "provider": "password", "created_at": time.time()}
+        user["_id"] = users.insert_one(user).inserted_id
+        return {"token": create_token(user), "user": user_response(user)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise auth_service_error(exc) from exc
+
+@app.post("/api/auth/login")
+def login(payload: Dict[str, str] = Body(...)):
+    email, password = payload.get("email", "").strip().lower(), payload.get("password", "")
+    try:
+        users = get_users_collection()
+        user = users.find_one({"email": email})
+        if not user or not user.get("password_hash") or not check_password(password, user["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        return {"token": create_token(user), "user": user_response(user)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise auth_service_error(exc) from exc
+
+@app.get("/api/auth/google")
+def google_login():
+    try:
+        return RedirectResponse(google_authorization_url())
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+@app.get("/api/auth/google/callback")
+def google_callback(code: str, state: str):
+    try:
+        profile = exchange_google_code(code, state)
+        users = get_users_collection()
+        user = users.find_one_and_update(
+            {"email": profile["email"].lower()},
+            {"$set": {"name": profile.get("name", profile["email"]), "picture": profile.get("picture", ""), "provider": "google", "updated_at": time.time()}, "$setOnInsert": {"created_at": time.time()}},
+            upsert=True, return_document=True,
+        )
+        if user is None:
+            user = users.find_one({"email": profile["email"].lower()})
+        token = create_token(user)
+        return RedirectResponse(f"{FRONTEND_URL}/?auth_token={urllib.parse.quote(token)}")
+    except Exception as exc:
+        return RedirectResponse(f"{FRONTEND_URL}/?auth_error={urllib.parse.quote(str(exc))}")
+
+@app.get("/api/auth/me")
+def auth_me(request: Request):
+    return {"user": user_response(get_current_user(request))}
 
 def resolve_profile(profile_data: Any) -> OrgProfile:
     if isinstance(profile_data, str):

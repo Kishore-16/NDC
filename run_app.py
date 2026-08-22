@@ -8,9 +8,9 @@ def main():
     print(" Launching Personalised Vulnerability Triage App ")
     print("==================================================")
 
-    print("[1/2] Starting FastAPI Backend on http://localhost:8000 ...")
+    print("[1/2] Starting FastAPI Backend on http://localhost:8001 ...")
     backend_proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"],
+        [sys.executable, "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8001"],
         cwd=os.path.abspath(os.path.dirname(__file__))
     )
 
@@ -23,7 +23,7 @@ def main():
     )
 
     print("\n✓ Servers launched!")
-    print("  Backend API:  http://localhost:8000/docs")
+    print("  Backend API:  http://localhost:8001/docs")
     print("  Frontend App: http://localhost:5173\n")
     print("Press Ctrl+C to terminate both servers.")
 

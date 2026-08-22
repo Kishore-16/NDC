@@ -10,10 +10,12 @@ import { GoldSetEvalView } from './components/GoldSetEvalView';
 import { ProfileUploader } from './components/ProfileUploader';
 import { VulnerabilityTable } from './components/VulnerabilityTable';
 import { RefreshCw, AlertCircle } from 'lucide-react';
+import { LandingAuth } from './components/LandingAuth';
 
 import { API_BASE_URL } from './config';
 
 export const App: React.FC = () => {
+  const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem('nexora_auth_token'));
   const [profiles, setProfiles] = useState<OrgProfile[]>([]);
   const [activeProfile, setActiveProfile] = useState<OrgProfile | null>(null);
   const [activeTab, setActiveTab] = useState<string>('triage');
@@ -26,8 +28,10 @@ export const App: React.FC = () => {
 
   // Initial fetch profiles
   useEffect(() => {
-    fetchProfiles();
-  }, []);
+    if (authToken) {
+      fetchProfiles();
+    }
+  }, [authToken]);
 
   // Recalculate triage whenever activeProfile changes
   useEffect(() => {
@@ -77,6 +81,10 @@ export const App: React.FC = () => {
     setActiveProfile(newProfile);
     setActiveTab('triage');
   };
+
+  if (!authToken) {
+    return <LandingAuth onEnterApp={(token) => { localStorage.setItem('nexora_auth_token', token); setAuthToken(token); }} />;
+  }
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
