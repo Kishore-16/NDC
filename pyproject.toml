@@ -1,2 +1,14 @@
+[project]
+name = "ndc-backend"
+version = "0.1.0"
+description = "Personalised Vulnerability Triage Platform Backend"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pandas",
+    "pymongo[srv]",
+]
+
 [tool.vercel]
 entrypoint = "backend.app:app"
