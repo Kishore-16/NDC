@@ -130,7 +130,11 @@ export function LandingAuth({ onEnterApp }: LandingAuthProps) {
     } finally { setIsSubmitting(false); }
   };
 
-  const startGoogleSignIn = () => { window.location.assign(`${API_BASE_URL}/api/auth/google`); };
+  const startGoogleSignIn = () => {
+    const redirectParam = encodeURIComponent(window.location.origin);
+    window.location.assign(`${API_BASE_URL}/api/auth/google?redirect_to=${redirectParam}`);
+  };
+
 
   return (
     <div className={`landing-shell ${theme === 'light' ? 'light' : ''}`}>

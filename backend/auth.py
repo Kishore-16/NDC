@@ -137,10 +137,12 @@ def get_organisation_profiles_collection():
     return profiles
 
 
-def google_authorization_url() -> str:
+def google_authorization_url(frontend_url: Optional[str] = None) -> str:
     if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI]):
         raise RuntimeError("Google OAuth settings are incomplete in .env.local")
-    state_payload = {"nonce": secrets.token_urlsafe(20), "exp": int(time.time()) + 600}
+    state_payload: Dict[str, Any] = {"nonce": secrets.token_urlsafe(20), "exp": int(time.time()) + 600}
+    if frontend_url:
+        state_payload["frontend_url"] = frontend_url.rstrip("/")
     state = _json_b64(state_payload)
     state_signature = _b64(hmac.new(_secret(), state.encode("ascii"), hashlib.sha256).digest())
     params = {
@@ -155,15 +157,18 @@ def google_authorization_url() -> str:
     return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
 
 
-def exchange_google_code(code: str, state: str) -> Dict[str, Any]:
+def exchange_google_code(code: str, state: str) -> Tuple[Dict[str, Any], Optional[str]]:
+    stored_frontend_url: Optional[str] = None
     try:
         signed_state, signature = state.rsplit(".", 1)
         expected = _b64(hmac.new(_secret(), signed_state.encode("ascii"), hashlib.sha256).digest())
         if not hmac.compare_digest(signature, expected):
             raise ValueError("Invalid OAuth state")
         padded = signed_state + "=" * (-len(signed_state) % 4)
-        if json.loads(base64.urlsafe_b64decode(padded))["exp"] < time.time():
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+        if payload["exp"] < time.time():
             raise ValueError("Expired OAuth state")
+        stored_frontend_url = payload.get("frontend_url")
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
         raise ValueError("OAuth session expired. Please try again.") from exc
 
@@ -179,4 +184,5 @@ def exchange_google_code(code: str, state: str) -> Dict[str, Any]:
         profile = json.loads(response.read())
     if not profile.get("email") or not profile.get("email_verified", False):
         raise ValueError("Google did not return a verified email address")
-    return profile
+    return profile, stored_frontend_url
+

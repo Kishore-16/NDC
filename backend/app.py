@@ -106,16 +106,21 @@ def login(payload: Dict[str, str] = Body(...)):
         raise auth_service_error(exc) from exc
 
 @app.get("/api/auth/google")
-def google_login():
+def google_login(request: Request, redirect_to: Optional[str] = None):
     try:
-        return RedirectResponse(google_authorization_url())
+        target_frontend = redirect_to or request.headers.get("referer") or request.headers.get("origin")
+        if target_frontend and "accounts.google.com" in target_frontend:
+            target_frontend = None
+        return RedirectResponse(google_authorization_url(target_frontend))
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 @app.get("/api/auth/google/callback")
 def google_callback(code: str, state: str):
+    fallback_frontend = (os.getenv("FRONTEND_URL") or "https://ndc-git-main-arvindkishore931-9199s-projects.vercel.app").rstrip("/")
     try:
-        profile = exchange_google_code(code, state)
+        profile, stored_frontend_url = exchange_google_code(code, state)
+        target_frontend = stored_frontend_url or fallback_frontend
         users = get_users_collection()
         user = users.find_one_and_update(
             {"email": profile["email"].lower()},
@@ -125,9 +130,10 @@ def google_callback(code: str, state: str):
         if user is None:
             user = users.find_one({"email": profile["email"].lower()})
         token = create_token(user)
-        return RedirectResponse(f"{FRONTEND_URL}/?auth_token={urllib.parse.quote(token)}")
+        return RedirectResponse(f"{target_frontend}/?auth_token={urllib.parse.quote(token)}")
     except Exception as exc:
-        return RedirectResponse(f"{FRONTEND_URL}/?auth_error={urllib.parse.quote(str(exc))}")
+        return RedirectResponse(f"{fallback_frontend}/?auth_error={urllib.parse.quote(str(exc))}")
+
 
 @app.get("/api/auth/me")
 def auth_me(request: Request):
