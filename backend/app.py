@@ -1,11 +1,15 @@
+import logging
 from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from typing import List, Optional, Dict, Any
 import json
 import os
+import re
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 
 from backend.auth import (
     FRONTEND_URL, check_password, create_token, exchange_google_code,
@@ -145,6 +149,106 @@ def resolve_profile(profile_id: str, user: Dict[str, Any]) -> OrgProfile:
         raise HTTPException(status_code=404, detail="Profile not found")
     return OrgProfile(**profile_document["profile"])
 
+
+def get_ai_explanation(item: TriageItem, profile: OrgProfile, purpose: str = "explanation") -> str:
+    """Request a constrained, defensive explanation without exposing provider secrets."""
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    featherless_key = os.getenv("FEATHERLESS_API_KEY", "").strip()
+    if not openrouter_key and not featherless_key:
+        raise HTTPException(
+            status_code=503,
+            detail="AI explanations are not configured. Set OPENROUTER_API_KEY on the API server.",
+        )
+
+    facts = {
+        "CVE": item.cve_id,
+        "product": item.product_name,
+        "organisation": profile.name,
+        "risk_appetite": profile.risk_appetite,
+        "personalised_rank": item.rank if item.rank else "not in Top 5",
+        "personalised_score_out_of_100": item.score_breakdown.final_score,
+        "CVSS": item.cvss_base_score,
+        "EPSS_probability_percent": round(item.first_epss * 100, 1),
+        "in_CISA_KEV": item.cisa_kev,
+        "is_critical_product": item.score_breakdown.is_critical_product,
+        "deterministic_reason": item.why_ranked_here,
+        "safe_next_action": item.safe_next_action,
+        "provenance": item.provenance_sources,
+        "confidence": f"{item.confidence_level}: {item.confidence_reason}",
+    }
+    if purpose == "remediation":
+        system_prompt = (
+            "You create safe, defensive remediation runbooks for a security dashboard. Use ONLY the supplied facts, "
+            "especially the safe_next_action. Do not invent product versions, commands, exploit details, bypasses, "
+            "threat actors, patches, timelines, or sources. Do not provide offensive or exploit instructions. "
+            "Return exactly 4 concise, sentence-case steps, one per line, formatted 'Step N: action'. "
+            "Keep each step under 22 words and make it a safe operational action such as verify scope, coordinate, "
+            "apply the approved vendor remediation, validate, or document."
+        )
+    else:
+        system_prompt = (
+            "You explain vulnerability triage decisions for a defensive security dashboard. "
+            "Use ONLY the supplied facts. Do not invent affected versions, exploit steps, patches, "
+            "timelines, threat actors, business facts, or sources. Do not provide exploit instructions. "
+            "Do not reveal private reasoning or use <think> tags; provide only the final explanation. "
+            "Clearly distinguish the deterministic score from your explanation. Use sentence case, no Markdown, "
+            "and no more than one short paragraph (35 words) per heading. Use these plain-text headings: Why it matters, "
+            "Why it is ranked this way, and Recommended next step. State uncertainty when the supplied facts do not establish something."
+        )
+    logger = logging.getLogger(__name__)
+
+    def payload_for(model: str) -> bytes:
+        payload = {
+            "model": model,
+            "max_tokens": 420,
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "Explain this decision using only these facts:\n" + json.dumps(facts, indent=2)},
+            ],
+        }
+        return json.dumps(payload).encode("utf-8")
+
+    def request_provider(endpoint: str, api_key: str, model: str, extra_headers: Optional[Dict[str, str]] = None) -> str:
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        if extra_headers:
+            headers.update(extra_headers)
+        provider_request = urllib.request.Request(endpoint, data=payload_for(model), method="POST", headers=headers)
+        with urllib.request.urlopen(provider_request, timeout=30) as response:
+            provider_response = json.loads(response.read().decode("utf-8"))
+        content = (provider_response["choices"][0]["message"].get("content") or "").strip()
+        content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
+        if not content:
+            raise ValueError("The AI provider returned an empty explanation")
+        return content
+
+    # OpenRouter is the primary provider. Its Qwen model slug is intentionally
+    # configurable because provider model availability can change over time.
+    if openrouter_key:
+        try:
+            return request_provider(
+                "https://openrouter.ai/api/v1/chat/completions",
+                openrouter_key,
+                os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3.5-lightning:free").strip(),
+                {"HTTP-Referer": FRONTEND_URL, "X-Title": "NEXORA Triage"},
+            )
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning("OpenRouter failed: %s", exc)
+            # Continue to the independent provider only when it was configured.
+
+    if featherless_key:
+        try:
+            return request_provider(
+                "https://api.featherless.ai/v1/chat/completions",
+                featherless_key,
+                os.getenv("FEATHERLESS_MODEL", "Qwen/Qwen3-0.6B").strip(),
+            )
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            logger.error("Featherless failed: %s", exc)
+            raise HTTPException(status_code=502, detail="The AI explanation service is temporarily unavailable. Please try again shortly.") from exc
+
+    raise HTTPException(status_code=502, detail="OpenRouter could not generate an explanation and no Featherless fallback is configured.")
+
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "total_vulnerabilities": len(VULN_DF), "profiles_count": len(BUILTIN_PROFILES)}
@@ -178,6 +282,42 @@ def run_triage(request: Request, payload: Dict[str, Any] = Body(...)):
         "gold_set_eval": gold_eval,
         "total_inventory_count": len(all_inventory),
         "inventory": all_inventory
+    }
+
+
+@app.post("/api/triage/{cve_id}/ai-explanation")
+def explain_triage_decision(cve_id: str, request: Request, payload: Dict[str, Any] = Body(...)):
+    """Generate an authenticated, profile-scoped AI explanation for one computed CVE decision."""
+    profile_id = payload.get("profile_id")
+    if not isinstance(profile_id, str) or not profile_id:
+        raise HTTPException(status_code=400, detail="profile_id is required")
+    profile = resolve_profile(profile_id, get_current_user(request))
+    _, inventory = triage_vulnerabilities(profile, VULN_DF)
+    item = next((candidate for candidate in inventory if candidate.cve_id == cve_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="Vulnerability not found for this profile")
+    return {
+        "cve_id": item.cve_id,
+        "profile_id": profile.org_id,
+        "explanation": get_ai_explanation(item, profile),
+    }
+
+
+@app.post("/api/triage/{cve_id}/remediation-plan")
+def create_remediation_plan(cve_id: str, request: Request, payload: Dict[str, Any] = Body(...)):
+    """Generate a profile-scoped, defensive sequence for the already selected safe action."""
+    profile_id = payload.get("profile_id")
+    if not isinstance(profile_id, str) or not profile_id:
+        raise HTTPException(status_code=400, detail="profile_id is required")
+    profile = resolve_profile(profile_id, get_current_user(request))
+    _, inventory = triage_vulnerabilities(profile, VULN_DF)
+    item = next((candidate for candidate in inventory if candidate.cve_id == cve_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="Vulnerability not found for this profile")
+    return {
+        "cve_id": item.cve_id,
+        "profile_id": profile.org_id,
+        "plan": get_ai_explanation(item, profile, purpose="remediation"),
     }
 
 @app.post("/api/compare")

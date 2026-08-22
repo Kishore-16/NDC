@@ -9,6 +9,7 @@ import { OrgProfile, TriageItem } from './types';
 
 const AUTH_STORAGE_KEY = 'nexora_auth_token';
 export interface SessionUser { name: string; email: string; }
+const uniqueCves = (items: TriageItem[]) => Array.from(new Map(items.map((item) => [item.cve_id, item])).values());
 
 function sessionUserFromToken(token: string | null): SessionUser {
   try {
@@ -72,7 +73,9 @@ function ProtectedWorkspace({ onSignOut, user }: { onSignOut: () => void; user: 
         const response = await apiFetch('/api/triage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal, body: JSON.stringify({ profile_id: activeProfile.org_id }) });
         if (!response.ok) throw new Error('Unable to calculate triage for this profile.');
         const result = await response.json();
-        const nextData = { top5: result.top_5 || [], inventory: result.inventory || [] };
+        // Preserve one rendered row per CVE even if an older API response or
+        // a source snapshot happens to contain duplicate records.
+        const nextData = { top5: uniqueCves(result.top_5 || []), inventory: uniqueCves(result.inventory || []) };
         triageCache.current.set(activeProfile.org_id, nextData);
         setTop5(nextData.top5); setInventory(nextData.inventory); setShowingCachedTriage(false);
       } catch (reason) { if ((reason as Error).name !== 'AbortError') setError(reason instanceof Error ? reason.message : 'Unable to load triage data.'); }

@@ -197,6 +197,15 @@ def triage_vulnerabilities(profile: OrgProfile, df: pd.DataFrame) -> Tuple[List[
         )
         items.append(item)
         
+    # The source snapshot can contain repeated CVE records. A decision list must
+    # represent each CVE once; retain its highest-scoring contextual record.
+    unique_items: Dict[str, TriageItem] = {}
+    for item in items:
+        existing = unique_items.get(item.cve_id)
+        if existing is None or item.score_breakdown.final_score > existing.score_breakdown.final_score:
+            unique_items[item.cve_id] = item
+
+    items = list(unique_items.values())
     relevant_items = [i for i in items if i.status == "RELEVANT"]
     relevant_items.sort(key=lambda x: x.score_breakdown.final_score, reverse=True)
     
