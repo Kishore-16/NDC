@@ -28,16 +28,16 @@ app = FastAPI(
     description="Deterministic vulnerability decision engine & triage platform"
 )
 
-# Enable CORS for local Vite frontend
+# Enable CORS for Vite frontend (local and deployed)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL, "http://localhost:5173"],
-    # Vite chooses the next free port (for example 5174) when 5173 is occupied.
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origins=[FRONTEND_URL, "http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174"],
+    allow_origin_regex=r"^https?://.*$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Cache loaded dataset and built-in profiles
 VULN_DF = load_vulnerabilities("data/vulnerabilities.csv")
