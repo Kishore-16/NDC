@@ -158,16 +158,78 @@ def resolve_profile(profile_id: str, user: Dict[str, Any]) -> OrgProfile:
     return OrgProfile(**profile_document["profile"])
 
 
+BRIEFING_HEADINGS = ("Why it matters", "Why it is ranked this way", "Recommended next step")
+BRIEFING_HEADING_PATTERN = re.compile(
+    r"(?im)^\s*(?:#{1,6}\s*)?(Why it matters|Why it is ranked this way|Recommended next step)\s*:?\s*"
+)
+BRIEFING_META_LANGUAGE = re.compile(
+    r"\b(identify the required structure|the prompt says|the instructions (?:say|require)|"
+    r"system prompt|provided json|as an ai|i need to|tags;|no markdown)\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_reasoning_wrappers(content: str) -> str:
+    """Keep only final text when a reasoning model leaks its scratch work."""
+    cleaned = re.sub(r"<(?:think|analysis)[^>]*>.*?</(?:think|analysis)>\s*", "", content, flags=re.IGNORECASE | re.DOTALL)
+    return cleaned.replace("```text", "").replace("```", "").strip()
+
+
+def _briefing_sections(content: str) -> Optional[Dict[str, str]]:
+    """Return a strict three-part briefing, or None when a provider ignored the format."""
+    cleaned = _strip_reasoning_wrappers(content)
+    matches = list(BRIEFING_HEADING_PATTERN.finditer(cleaned))
+    if len(matches) != len(BRIEFING_HEADINGS):
+        return None
+    if cleaned[:matches[0].start()].strip():
+        return None
+    if [match.group(1).casefold() for match in matches] != [heading.casefold() for heading in BRIEFING_HEADINGS]:
+        return None
+
+    sections: Dict[str, str] = {}
+    for index, match in enumerate(matches):
+        heading = match.group(1).casefold()
+        body = cleaned[match.end():matches[index + 1].start() if index + 1 < len(matches) else None].strip()
+        if not body or heading in sections:
+            return None
+        sections[heading] = re.sub(r"\s+", " ", body)
+
+    if set(sections) != {heading.casefold() for heading in BRIEFING_HEADINGS}:
+        return None
+    return sections
+
+
+def _valid_briefing(content: str, facts: Dict[str, Any]) -> Optional[str]:
+    """Accept only concise, final answers that demonstrably describe this CVE."""
+    sections = _briefing_sections(content)
+    if not sections:
+        return None
+    combined = " ".join(sections.values())
+    if BRIEFING_META_LANGUAGE.search(combined):
+        return None
+    if str(facts["CVE"]).casefold() not in combined.casefold() or str(facts["product"]).casefold() not in combined.casefold():
+        return None
+    if any(len(body.split()) > 35 for body in sections.values()):
+        return None
+    return "\n\n".join(f"{heading}\n{sections[heading.casefold()]}" for heading in BRIEFING_HEADINGS)
+
+
+def _fact_based_briefing(item: TriageItem, profile: OrgProfile) -> str:
+    """Guaranteed safe fallback when an AI provider returns unusable content."""
+    breakdown = item.score_breakdown
+    criticality = "is marked as a critical product" if breakdown.is_critical_product else "is not marked as a critical product"
+    kev = "is listed in CISA KEV" if item.cisa_kev else "is not listed in CISA KEV"
+    return (
+        f"Why it matters\n{item.cve_id} affects {item.product_name}, which {criticality} for {profile.name}. It {kev}; the supplied facts do not establish affected versions or business impact.\n\n"
+        f"Why it is ranked this way\nDeterministic score: {breakdown.final_score:.1f}/100. It combines CVSS {item.cvss_base_score:.1f}, EPSS {item.first_epss * 100:.1f}%, KEV status, and this profile's product relevance.\n\n"
+        f"Recommended next step\n{item.safe_next_action}"
+    )
+
+
 def get_ai_explanation(item: TriageItem, profile: OrgProfile, purpose: str = "explanation") -> str:
     """Request a constrained, defensive explanation without exposing provider secrets."""
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     featherless_key = os.getenv("FEATHERLESS_API_KEY", "").strip()
-    if not openrouter_key and not featherless_key:
-        raise HTTPException(
-            status_code=503,
-            detail="AI explanations are not configured. Set OPENROUTER_API_KEY on the API server.",
-        )
-
     facts = {
         "CVE": item.cve_id,
         "product": item.product_name,
@@ -199,63 +261,88 @@ def get_ai_explanation(item: TriageItem, profile: OrgProfile, purpose: str = "ex
             "Use ONLY the supplied facts. Do not invent affected versions, exploit steps, patches, "
             "timelines, threat actors, business facts, or sources. Do not provide exploit instructions. "
             "Do not reveal private reasoning or use <think> tags; provide only the final explanation. "
-            "Clearly distinguish the deterministic score from your explanation. Use sentence case, no Markdown, "
-            "and no more than one short paragraph (35 words) per heading. Use these plain-text headings: Why it matters, "
-            "Why it is ranked this way, and Recommended next step. State uncertainty when the supplied facts do not establish something."
+            "Return exactly these plain-text headings in this exact order: Why it matters, Why it is ranked this way, "
+            "Recommended next step. Put one sentence-case paragraph of at most 35 words beneath each heading. "
+            "Name the exact supplied CVE ID and product. In the ranking section, label the deterministic score separately "
+            "from the explanation and cite CVSS, EPSS, KEV status, and product relevance. State uncertainty when facts do not establish something."
         )
     logger = logging.getLogger(__name__)
 
-    def payload_for(model: str) -> bytes:
+    def payload_for(model: str, corrective: bool = False, supports_reasoning_control: bool = False) -> bytes:
+        corrective_instruction = "" if not corrective else (
+            " Your previous response was invalid. Return only the three required headings and their short paragraphs; "
+            "do not discuss instructions, JSON, formatting, or your reasoning."
+        )
         payload = {
             "model": model,
-            "max_tokens": 420,
-            "temperature": 0.2,
+            "max_tokens": 300 if purpose == "explanation" else 420,
+            "temperature": 0.1,
             "messages": [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": system_prompt + corrective_instruction},
                 {"role": "user", "content": "Explain this decision using only these facts:\n" + json.dumps(facts, indent=2)},
             ],
         }
+        if supports_reasoning_control:
+            payload["reasoning"] = {"enabled": False}
         return json.dumps(payload).encode("utf-8")
 
-    def request_provider(endpoint: str, api_key: str, model: str, extra_headers: Optional[Dict[str, str]] = None) -> str:
+    def request_provider(endpoint: str, api_key: str, model: str, extra_headers: Optional[Dict[str, str]] = None, supports_reasoning_control: bool = False, corrective: bool = False) -> str:
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         if extra_headers:
             headers.update(extra_headers)
-        provider_request = urllib.request.Request(endpoint, data=payload_for(model), method="POST", headers=headers)
+        provider_request = urllib.request.Request(endpoint, data=payload_for(model, corrective, supports_reasoning_control), method="POST", headers=headers)
         with urllib.request.urlopen(provider_request, timeout=30) as response:
             provider_response = json.loads(response.read().decode("utf-8"))
-        content = (provider_response["choices"][0]["message"].get("content") or "").strip()
-        content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
+        content = provider_response["choices"][0]["message"].get("content") or ""
+        if isinstance(content, list):
+            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        if not isinstance(content, str):
+            raise ValueError("The AI provider returned non-text content")
+        content = _strip_reasoning_wrappers(content)
         if not content:
             raise ValueError("The AI provider returned an empty explanation")
         return content
 
+    def try_provider(endpoint: str, api_key: str, model: str, extra_headers: Optional[Dict[str, str]] = None, supports_reasoning_control: bool = False) -> Optional[str]:
+        for corrective in (False, True):
+            try:
+                content = request_provider(endpoint, api_key, model, extra_headers, supports_reasoning_control, corrective)
+                if purpose == "remediation":
+                    return content
+                briefing = _valid_briefing(content, facts)
+                if briefing:
+                    return briefing
+                logger.warning("AI provider returned an invalid briefing for %s (corrective=%s)", item.cve_id, corrective)
+            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                logger.warning("AI provider failed for %s (corrective=%s): %s", item.cve_id, corrective, exc)
+        return None
+
     # OpenRouter is the primary provider. Its Qwen model slug is intentionally
     # configurable because provider model availability can change over time.
     if openrouter_key:
-        try:
-            return request_provider(
-                "https://openrouter.ai/api/v1/chat/completions",
-                openrouter_key,
-                os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3.5-lightning:free").strip(),
-                {"HTTP-Referer": FRONTEND_URL, "X-Title": "NEXORA Triage"},
-            )
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            logger.warning("OpenRouter failed: %s", exc)
-            # Continue to the independent provider only when it was configured.
+        briefing = try_provider(
+            "https://openrouter.ai/api/v1/chat/completions",
+            openrouter_key,
+            os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3.5-lightning:free").strip(),
+            {"HTTP-Referer": FRONTEND_URL, "X-Title": "NEXORA Triage"},
+            supports_reasoning_control=True,
+        )
+        if briefing:
+            return briefing
 
     if featherless_key:
-        try:
-            return request_provider(
-                "https://api.featherless.ai/v1/chat/completions",
-                featherless_key,
-                os.getenv("FEATHERLESS_MODEL", "Qwen/Qwen3-0.6B").strip(),
-            )
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            logger.error("Featherless failed: %s", exc)
-            raise HTTPException(status_code=502, detail="The AI explanation service is temporarily unavailable. Please try again shortly.") from exc
+        briefing = try_provider(
+            "https://api.featherless.ai/v1/chat/completions",
+            featherless_key,
+            os.getenv("FEATHERLESS_MODEL", "Qwen/Qwen3-0.6B").strip(),
+        )
+        if briefing:
+            return briefing
 
-    raise HTTPException(status_code=502, detail="OpenRouter could not generate an explanation and no Featherless fallback is configured.")
+    if purpose == "explanation":
+        logger.warning("Using deterministic AI-briefing fallback for %s", item.cve_id)
+        return _fact_based_briefing(item, profile)
+    raise HTTPException(status_code=502, detail="The AI remediation service is temporarily unavailable. Please try again shortly.")
 
 @app.get("/api/health")
 def health_check():
