@@ -76,7 +76,7 @@ function ProtectedWorkspace({ onSignOut, user }: { onSignOut: () => void; user: 
         const result = await response.json();
         // Preserve one rendered row per CVE even if an older API response or
         // a source snapshot happens to contain duplicate records.
-        const nextData = { top5: uniqueCves(result.top_5 || []), inventory: uniqueCves(result.inventory || []) };
+        const nextData = { top5: uniqueCves(result.top_5 || []), inventory: result.inventory || [] };
         triageCache.current.set(activeProfile.org_id, nextData);
         setTop5(nextData.top5); setInventory(nextData.inventory); setShowingCachedTriage(false);
       } catch (reason) { if ((reason as Error).name !== 'AbortError') setError(reason instanceof Error ? reason.message : 'Unable to load triage data.'); }
