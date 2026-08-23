@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useNavigat
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import { LandingAuth } from './components/LandingAuth';
 import { WorkspaceShell } from './components/WorkspaceShell';
-import { AppOverview, ComparePage, GoldSetPage, InventoryPage, NegativeTestPage, ProfileCustomPage, ProfilesPage, TriageDetailPage, TriagePage, WorkspaceContext } from './components/WorkspacePages';
+import { AppOverview, ComparePage, FixedCvesPage, GoldSetPage, InventoryPage, NegativeTestPage, ProfileCustomPage, ProfilesPage, TriageDetailPage, TriagePage, WorkspaceContext } from './components/WorkspacePages';
 import { apiFetch } from './api';
 import { OrgProfile, TriageItem } from './types';
 
@@ -120,7 +120,7 @@ function AuthenticatedRoutes() {
     <Route path="/app" element={token ? <ProtectedWorkspace onSignOut={signOut} user={sessionUserFromToken(token)} /> : <Navigate to="/" replace />}>
       <Route index element={<AppOverview />} /><Route path="triage" element={<TriagePage />} /><Route path="triage/:cveId" element={<TriageDetailPage />} />
       <Route path="compare" element={<ComparePage />} /><Route path="negative-test" element={<NegativeTestPage />} /><Route path="gold-set" element={<GoldSetPage />} />
-      <Route path="inventory" element={<InventoryPage />} /><Route path="inventory/:cveId" element={<TriageDetailPage />} />
+      <Route path="inventory" element={<InventoryPage />} /><Route path="inventory/:cveId" element={<TriageDetailPage />} /><Route path="fixed" element={<FixedCvesPage />} />
       <Route path="profiles" element={<ProfilesPage />} /><Route path="profiles/custom" element={<ProfileCustomPage />} />
     </Route>
     <Route path="*" element={<Navigate to={token ? '/app' : '/'} replace />} />
