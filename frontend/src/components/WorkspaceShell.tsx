@@ -1,5 +1,5 @@
 import { ReactNode, useState } from 'react';
-import { BarChart3, Building2, ChevronDown, FlaskConical, GitCompare, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, ShieldCheck, UserRound, X } from 'lucide-react';
+import { BarChart3, Building2, CheckCircle2, ChevronDown, FlaskConical, GitCompare, LayoutDashboard, LogOut, Menu, PanelLeftClose, PanelLeftOpen, Plus, ShieldCheck, UserRound, X } from 'lucide-react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { OrgProfile } from '../types';
 import type { SessionUser } from '../App';
@@ -9,7 +9,7 @@ const navItems = [
   { to: '/app', label: 'Dashboard', icon: LayoutDashboard, end: true, group: 'Overview' },
   { to: '/app/triage', label: 'Triage', icon: ShieldCheck, group: 'Triage' }, { to: '/app/compare', label: 'Compare', icon: GitCompare, group: 'Triage' },
   { to: '/app/negative-test', label: 'Negative Test', icon: FlaskConical, group: 'Validation' }, { to: '/app/gold-set', label: 'Gold Set', icon: BarChart3, group: 'Validation' },
-  { to: '/app/inventory', label: 'Vulnerabilities', icon: Building2, group: 'Data' }, { to: '/app/profiles', label: 'Profiles', icon: Building2, group: 'Organisation' },
+  { to: '/app/inventory', label: 'Vulnerabilities', icon: Building2, group: 'Data' }, { to: '/app/fixed', label: 'Fixed CVEs', icon: CheckCircle2, group: 'Data' }, { to: '/app/profiles', label: 'Profiles', icon: Building2, group: 'Organisation' },
 ];
 
 export function WorkspaceShell({ activeProfile, user, onSignOut, children }: WorkspaceShellProps) {
