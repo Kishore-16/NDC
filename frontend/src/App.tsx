@@ -32,6 +32,7 @@ function ProtectedWorkspace({ onSignOut, user }: { onSignOut: () => void; user: 
   const [inventory, setInventory] = useState<TriageItem[]>([]);
   const [triageLoading, setTriageLoading] = useState(true);
   const [showingCachedTriage, setShowingCachedTriage] = useState(false);
+  const [triageRevision, setTriageRevision] = useState(0);
   const triageCache = useRef(new Map<string, { top5: TriageItem[]; inventory: TriageItem[] }>());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +83,7 @@ function ProtectedWorkspace({ onSignOut, user }: { onSignOut: () => void; user: 
       finally { if (!controller.signal.aborted) setTriageLoading(false); }
     };
     void loadTriage(); return () => controller.abort();
-  }, [activeProfile]);
+  }, [activeProfile, triageRevision]);
   const onProfileUploaded = (profile: OrgProfile) => { setProfiles((current) => [...current.filter((item) => item.org_id !== profile.org_id), profile]); setCustomProfileIds((current) => [...new Set([...current, profile.org_id])]); selectProfile(profile); };
   const deleteCustomProfile = async (profile: OrgProfile) => {
     const response = await apiFetch(`/api/profiles/${encodeURIComponent(profile.org_id)}`, { method: 'DELETE' });
@@ -92,11 +93,19 @@ function ProtectedWorkspace({ onSignOut, user }: { onSignOut: () => void; user: 
     setProfiles(remaining); setCustomProfileIds((current) => current.filter((id) => id !== profile.org_id));
     if (activeProfile?.org_id === profile.org_id && remaining[0]) selectProfile(remaining.find((item) => item.org_id === 'ORG-002') || remaining[0]);
   };
+  const setVulnerabilityFixed = async (cveId: string, fixed: boolean) => {
+    if (!activeProfile) return;
+    const response = await apiFetch(`/api/profiles/${encodeURIComponent(activeProfile.org_id)}/vulnerabilities/${encodeURIComponent(cveId)}/fixed`, { method: fixed ? 'PUT' : 'DELETE' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.detail || 'Unable to update the vulnerability status.');
+    triageCache.current.delete(activeProfile.org_id);
+    setTriageRevision((current) => current + 1);
+  };
 
   if (loading) return <LoadingState message="Loading organisation profiles…" />;
   if (error && profiles.length === 0) return <div className="workspace-state"><AlertCircle size={32} /><h2>Workspace unavailable</h2><p>{error}</p><button className="btn-primary" onClick={() => void refreshProfiles()}><RefreshCw size={16} /> Retry</button></div>;
   if (!activeProfile) return <div className="workspace-state"><AlertCircle size={32} /><h2>No organisation profiles found</h2></div>;
-  const context: WorkspaceContext = { profiles, activeProfile, selectProfile, top5, inventory, triageLoading, showingCachedTriage, onProfileUploaded, customProfileIds, deleteCustomProfile };
+  const context: WorkspaceContext = { profiles, activeProfile, selectProfile, top5, inventory, triageLoading, showingCachedTriage, onProfileUploaded, customProfileIds, deleteCustomProfile, setVulnerabilityFixed };
   return <WorkspaceShell activeProfile={activeProfile} user={user} onSignOut={onSignOut}>{error && <div className="workspace-inline-error"><AlertCircle size={17} /> {error}</div>}<Outlet context={context} /></WorkspaceShell>;
 }
 

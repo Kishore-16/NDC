@@ -47,6 +47,7 @@ export interface TriageItem {
   provenance_sources: string[];
   reference_url: string;
   status: string;
+  is_fixed: boolean;
 }
 
 export interface NegativeTestItem {

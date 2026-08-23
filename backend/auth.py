@@ -156,6 +156,12 @@ def get_organisation_profiles_collection():
     return profiles
 
 
+def get_fixed_vulnerabilities_collection():
+    fixed = get_database().fixed_vulnerabilities
+    fixed.create_index([("owner_user_id", 1), ("profile_id", 1), ("cve_id", 1)], unique=True)
+    return fixed
+
+
 def google_authorization_url(frontend_url: Optional[str] = None) -> str:
     if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI]):
         raise RuntimeError("Google OAuth settings are incomplete in .env.local")
