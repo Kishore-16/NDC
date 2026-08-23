@@ -63,6 +63,7 @@ class TriageItem(BaseModel):
     provenance_sources: List[str]
     reference_url: str
     status: str  # RELEVANT, NEEDS_VERIFICATION, EXCLUDED
+    is_fixed: bool = False
 
 class NegativeTestItem(BaseModel):
     cve_id: str

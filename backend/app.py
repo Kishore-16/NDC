@@ -13,7 +13,7 @@ import urllib.request
 
 from backend.auth import (
     FRONTEND_URL, check_password, create_token, exchange_google_code,
-    get_allowed_frontend_urls, get_frontend_url, get_organisation_profiles_collection, get_users_collection,
+    get_allowed_frontend_urls, get_fixed_vulnerabilities_collection, get_frontend_url, get_organisation_profiles_collection, get_users_collection,
     google_authorization_url, hash_password, verify_token,
 )
 
@@ -277,9 +277,16 @@ def run_triage(request: Request, payload: Dict[str, Any] = Body(...)):
     profile_id = payload.get("profile_id")
     if not isinstance(profile_id, str) or not profile_id:
         raise HTTPException(status_code=400, detail="profile_id is required")
-    profile = resolve_profile(profile_id, get_current_user(request))
+    user = get_current_user(request)
+    profile = resolve_profile(profile_id, user)
         
-    top_5, all_inventory = triage_vulnerabilities(profile, VULN_DF)
+    _, all_inventory = triage_vulnerabilities(profile, VULN_DF)
+    fixed_cves = {item["cve_id"] for item in get_fixed_vulnerabilities_collection().find({"owner_user_id": str(user["_id"]), "profile_id": profile.org_id}, {"_id": 0, "cve_id": 1})}
+    for item in all_inventory:
+        item.is_fixed = item.cve_id in fixed_cves
+    top_5 = [item.copy(deep=True) for item in all_inventory if item.status == "RELEVANT" and not item.is_fixed][:5]
+    for rank, item in enumerate(top_5, start=1):
+        item.rank = rank
     negatives = get_negative_tests(profile, VULN_DF)
     gold_eval = evaluate_gold_set(profile, "data/gold_set.csv")
     
@@ -291,6 +298,29 @@ def run_triage(request: Request, payload: Dict[str, Any] = Body(...)):
         "total_inventory_count": len(all_inventory),
         "inventory": all_inventory
     }
+
+
+@app.put("/api/profiles/{profile_id}/vulnerabilities/{cve_id}/fixed")
+def mark_vulnerability_fixed(profile_id: str, cve_id: str, request: Request):
+    user = get_current_user(request)
+    profile = resolve_profile(profile_id, user)
+    _, inventory = triage_vulnerabilities(profile, VULN_DF)
+    if not any(item.cve_id == cve_id and item.status == "RELEVANT" for item in inventory):
+        raise HTTPException(status_code=404, detail="Relevant vulnerability not found for this profile")
+    get_fixed_vulnerabilities_collection().update_one(
+        {"owner_user_id": str(user["_id"]), "profile_id": profile.org_id, "cve_id": cve_id},
+        {"$set": {"updated_at": time.time()}, "$setOnInsert": {"created_at": time.time()}},
+        upsert=True,
+    )
+    return {"detail": "Vulnerability marked fixed", "cve_id": cve_id}
+
+
+@app.delete("/api/profiles/{profile_id}/vulnerabilities/{cve_id}/fixed")
+def reopen_vulnerability(profile_id: str, cve_id: str, request: Request):
+    user = get_current_user(request)
+    resolve_profile(profile_id, user)
+    get_fixed_vulnerabilities_collection().delete_one({"owner_user_id": str(user["_id"]), "profile_id": profile_id, "cve_id": cve_id})
+    return {"detail": "Vulnerability reopened", "cve_id": cve_id}
 
 
 @app.post("/api/triage/{cve_id}/ai-explanation")
