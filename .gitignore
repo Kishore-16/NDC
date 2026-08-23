@@ -51,3 +51,6 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Source archives already extracted into frontend/public
+*.zip
