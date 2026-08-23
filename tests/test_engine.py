@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from backend.engine import (
     load_vulnerabilities, load_profiles, triage_vulnerabilities,
     get_negative_tests, evaluate_gold_set, compare_profiles,
-    normalize_product_name
+    normalize_product_name, calculate_score_breakdown
 )
 
 class TestEngine(unittest.TestCase):
@@ -57,6 +57,20 @@ class TestEngine(unittest.TestCase):
     def test_profile_comparison(self):
         comp = compare_profiles(self.bank_profile, self.startup_profile, self.df_vuln)
         self.assertGreater(len(comp), 0)
+
+    def test_personalised_score_is_capped_at_100(self):
+        # Maximum weighted signals plus the critical-product boost must still
+        # remain on the public 0–100 score scale.
+        row = {
+            "product_name": "Core Banking Framework",
+            "cvss_base_score": 10.0,
+            "cisa_kev": True,
+            "first_epss": 1.0,
+        }
+        breakdown = calculate_score_breakdown(row, self.bank_profile)
+        self.assertEqual(breakdown.base_score, 100.0)
+        self.assertEqual(breakdown.critical_product_boost, 10.0)
+        self.assertEqual(breakdown.final_score, 100.0)
 
 if __name__ == "__main__":
     unittest.main()

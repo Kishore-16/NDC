@@ -104,7 +104,9 @@ def calculate_score_breakdown(row: pd.Series, profile: OrgProfile) -> ScoreBreak
     is_crit = norm_prod in norm_crit
     critical_boost = 10.0 if is_crit else 0.0
     
-    final_score = base_score + critical_boost
+    # A critical-product boost can take a full-weight score above 100. The
+    # personalised score is intentionally presented as a 0–100 scale.
+    final_score = max(0.0, min(100.0, base_score + critical_boost))
     
     return ScoreBreakdown(
         cvss_normalized=round(cvss_norm, 4),
